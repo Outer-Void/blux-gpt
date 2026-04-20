@@ -1,3 +1,3 @@
-# blux-gpt
+# BluxGPT v1.0
 
-## it begins
+Starter scaffold for BluxGPT.
