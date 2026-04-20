@@ -1,25 +1,49 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "Installing BluxGPT..."
+# Resolve repo root regardless of where this script is called from
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+cd "$REPO_ROOT"
 
-# Step 1: deps
-bash scripts/check_deps.sh
+echo "[bluxgpt] Installing BluxGPT v1.0..."
+echo "[bluxgpt] Repo root: $REPO_ROOT"
 
-# Step 2: venv
-python3 -m venv .venv
-source .venv/bin/activate
+# Step 1: dependency check
+echo "[bluxgpt] Checking dependencies..."
+bash "$REPO_ROOT/scripts/check_deps.sh"
 
-pip install --upgrade pip
-pip install -r requirements.txt
+# Step 2: Python venv
+echo "[bluxgpt] Creating Python virtual environment..."
+python3 -m venv "$REPO_ROOT/.venv"
 
-# Step 3: config
+# Activate — compatible with bash/zsh and proot/Termux
+# shellcheck disable=SC1091
+. "$REPO_ROOT/.venv/bin/activate"
+
+echo "[bluxgpt] Installing Python packages..."
+pip install --upgrade pip --quiet
+pip install -r "$REPO_ROOT/requirements.txt" --quiet
+
+# Step 3: user config
+echo "[bluxgpt] Setting up user config..."
 mkdir -p "$HOME/.config/bluxgpt"
 if [[ ! -f "$HOME/.config/bluxgpt/.env" ]]; then
-  cp config/.env.example "$HOME/.config/bluxgpt/.env"
+  cp "$REPO_ROOT/config/.env.example" "$HOME/.config/bluxgpt/.env"
+  echo "[bluxgpt] Config created: ~/.config/bluxgpt/.env"
+  echo "[bluxgpt] Set your API keys there before running blux."
+else
+  echo "[bluxgpt] Config already exists: ~/.config/bluxgpt/.env"
 fi
 
-# Step 4: shell
-bash scripts/install_shell.sh
+# Step 4: shell overlay
+echo "[bluxgpt] Installing shell overlay..."
+bash "$REPO_ROOT/scripts/install_shell.sh"
 
-echo "Done. Restart shell and run: blux version"
+echo
+echo "[bluxgpt] Installation complete."
+echo
+echo "  Next steps:"
+echo "    1. Set API keys in ~/.config/bluxgpt/.env"
+echo "    2. source ~/.zshrc  (or open a new terminal)"
+echo "    3. blux status"
+echo "    4. blux ask \"your question\""

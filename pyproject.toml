@@ -1,8 +1,20 @@
 [project]
 name = "bluxgpt"
 version = "1.0.0"
-description = "BluxGPT v1.0 - advisory AI CLI"
+description = "BluxGPT v1.0 — advisory AI CLI for the BLUX environment"
 requires-python = ">=3.8"
+dependencies = [
+    "typer",
+    "rich",
+    "anthropic",
+    "openai",
+    "python-dotenv",
+]
 
 [project.scripts]
 bluxgpt = "bluxgpt.cli:app"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.backends.legacy:build"
+
