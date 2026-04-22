@@ -7,13 +7,16 @@
 
 ## Model stack
 
-| Lane | Key | Provider | Notes |
-|---|---|---|---|
-| Default | `gpt-5-mini` | OpenAI | Balanced |
-| Cheap | `deepseek-r2` | DeepSeek | Cost-efficient |
-| Fast/light | `claude-haiku-4.5` | Anthropic | Low latency |
+| Lane | Key | Provider |
+|---|---|---|
+| Default | `gpt-5-mini` | OpenAI |
+| Cheap | `deepseek-chat` | DeepSeek |
+| Fast/light | `claude-haiku-4.5` | Anthropic |
+| Reasoning | `deepseek-reasoner` | DeepSeek |
 
-Aliases: `claude`, `haiku`, `fast`, `deepseek`, `cheap`, `openai`, `gpt`
+You only need API keys for models you intend to use.
+
+**Aliases:** `claude`, `haiku`, `fast`, `deepseek`, `cheap`, `reasoner`, `reason`, `openai`, `gpt`
 
 ---
 
@@ -23,8 +26,8 @@ Aliases: `claude`, `haiku`, `fast`, `deepseek`, `cheap`, `openai`, `gpt`
 - Never auto-runs its own output
 - Never writes to `~/.zshrc` directly
 - Installs through `~/.zshrc.local` overlay only
-- Requires `BLUX10K_READY=1` (blux10k v2.0+)
-- All API keys masked in logs
+- Requires blux10k v2.0+ with `BLUX10K_READY=1` and a verifiable `check_version.sh`
+- API keys are masked (`****last4`) in all logs
 
 ---
 
@@ -38,84 +41,138 @@ Aliases: `claude`, `haiku`, `fast`, `deepseek`, `cheap`, `openai`, `gpt`
 ## Install
 
 ```bash
-# blux10k must already be installed and your shell reloaded
+# blux10k must be installed first and your shell reloaded
 ./install.sh
 source ~/.zshrc
 blux status
 ```
+
+Safe to re-run. The virtualenv is not recreated if it is already usable.
 
 ---
 
 ## Commands
 
 ```bash
-blux version                           # print BluxGPT + trifecta versions
-blux status                            # config and API key health
-blux models                            # list all models and aliases
+blux version                             # BluxGPT version
+blux status                              # configuration status (not live connectivity)
+blux models                              # list models and aliases
 
-blux ask "your question"               # one-shot query (default model)
-blux ask --model deepseek-r2 "..."    # use cheap lane
-blux ask --model claude "..."         # use fast lane (alias works)
-blux ask --no-context "..."           # skip env context injection
+blux ask "your question"                 # one-shot query (default model)
+blux ask --model claude "..."            # use fast/light lane
+blux ask --model deepseek-chat "..."     # use cheap lane
+blux ask --model deepseek-reasoner "..." # use reasoning lane
+blux ask --no-context "..."              # skip environment context injection
 
-blux history                           # show recent history (formatted)
-blux history --raw                     # raw JSON output
-blux history --limit 50                # more entries
-blux history --clear                   # wipe history
+blux history                             # show recent history
+blux history --raw                       # raw JSON output
+blux history --limit 50                  # show more entries
+blux history --clear                     # wipe history
 
-blux uninstall                         # remove BLUXGPT OVERLAY from ~/.zshrc.local
+blux uninstall                           # remove BLUXGPT OVERLAY from ~/.zshrc.local
 ```
 
 ---
 
 ## Config
 
-User config file: `~/.config/bluxgpt/.env`
+User config: `~/.config/bluxgpt/.env`
 
-Created automatically on first install from `config/.env.example`.
+Created automatically on first install from `config/.env.example`. Add your API keys there.
 
 ```bash
-# Set your API keys:
-ANTHROPIC_API_KEY=sk-ant-...
-DEEPSEEK_API_KEY=...
 OPENAI_API_KEY=sk-...
+DEEPSEEK_API_KEY=...
+ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-You only need to set keys for models you intend to use.
+API model names are defined in the model registry (`bluxgpt/core/models.py`) and are not overridable via env vars. Lane selection (`BLUXGPT_DEFAULT_MODEL`, etc.) and API credentials are the only user-configurable values.
+
+---
+
+## blux status
+
+`blux status` shows **Configuration Status** only. It does not make any API calls or verify provider connectivity.
+
+- **"set"** means the key is present in your config file
+- **"missing"** means the key is absent
+- Neither implies the key is valid or the provider is reachable
 
 ---
 
 ## Context injection
 
-By default, BluxGPT injects a system prompt that includes:
+By default, each request includes a system prompt with:
 
-- Platform (`proot-debian` / `termux` / `debian` / `wsl` / `macos`)
-- blux10k version, AXIOM version
-- Current working directory
-- Git branch and status (if in a repo)
-- Shell, user, terminal
+- Platform (`termux` / `proot-debian` / `debian` / `wsl` / `macos`)
+- blux10k and AXIOM versions (if present)
+- Current working directory, git branch and status
+- Shell and user
 
-This makes responses aware of your environment without you having to explain it.  
 Disable per-query with `--no-context`.
+
+---
+
+## blux10k dependency
+
+BluxGPT requires blux10k v2.0+ to be installed and active. The dependency gate checks for `BLUX10K_READY=1` in your environment and requires `check_version.sh` to be present and executable.
+
+Default install root: `~/.blux10k`
+
+If blux10k is installed elsewhere, set `BLUX10K_INSTALL_DIR` before running the installer:
+
+```bash
+BLUX10K_INSTALL_DIR=/path/to/blux10k ./install.sh
+```
+
+---
+
+## Optional developer tools
+
+BluxGPT can optionally install Claude Code and OpenAI Codex during setup. These are not required for any core blux functionality.
+
+```bash
+BLUXGPT_INSTALL_CLAUDE_CODE=1 ./install.sh
+BLUXGPT_INSTALL_CODEX=1 ./install.sh
+
+# Both at once:
+BLUXGPT_INSTALL_CLAUDE_CODE=1 BLUXGPT_INSTALL_CODEX=1 ./install.sh
+```
+
+Requires Node.js and npm. If npm is not present, the step is skipped cleanly.
+
+Install commands used:
+
+```bash
+npm install -g @anthropic-ai/claude-code
+npm i -g @openai/codex
+```
 
 ---
 
 ## AXIOM integration
 
-When `AXIOM_READY=1` is set:
+When AXIOM is installed and `AXIOM_READY=1`:
 
-- `ax ai "question"` proxies directly to `blux ask`
+- `ax ai "question"` proxies to `blux ask`
 - BluxGPT writes run logs to `$AXIOM_REPO_ROOT/cockpit/runs/`
-- Overwatch AI panel uses BluxGPT as its backend
 
 ---
 
 ## Logging
 
-Local logs: `~/.config/bluxgpt/logs/<timestamp>_query.json`  
-AXIOM runs: `$AXIOM_REPO_ROOT/cockpit/runs/<timestamp>_ai_bluxgpt/` (when AXIOM present)
+Local logs: `~/.config/bluxgpt/logs/<timestamp>_query.json`
 
-API keys are always masked (`****last4`) in all log files.
+---
+
+## Running tests
+
+Tests use **pytest**. `python -m unittest` is not supported.
+
+```bash
+source .venv/bin/activate
+pytest
+```
 
 ---
 
@@ -125,33 +182,22 @@ API keys are always masked (`****last4`) in all log files.
 blux-gpt/
 ├── VERSION
 ├── install.sh
-├── requirements.txt
 ├── pyproject.toml
+├── requirements.txt
 ├── config/
 │   └── .env.example
 ├── bluxgpt/
-│   ├── cli.py              entry point
-│   ├── adapters/           model adapters (OpenAI, DeepSeek, Claude)
-│   ├── core/               config, client, context, history, logger, models
-│   └── shell/              .zshrc.local overlay template and blux() function
+│   ├── cli.py
+│   ├── adapters/       OpenAI, DeepSeek, Claude
+│   ├── core/           config, client, context, history, logger, models
+│   └── shell/          blux() function and .zshrc.local overlay template
 ├── scripts/
-│   ├── check_deps.sh       blux10k gate + Python version check
-│   └── install_shell.sh    injects BLUXGPT OVERLAY into ~/.zshrc.local
+│   ├── check_deps.sh
+│   └── install_shell.sh
 └── tests/
 ```
 
 ---
 
-## What's not in v1.0
-
-- Streaming responses
-- Interactive chat sessions (`blux chat`)
-- AXIOM Overwatch panel wiring (backend detection is ready; panel UI is in AXIOM)
-- Richer `ax doctor` BluxGPT section
-
-These are v1.1+ scope.
-
----
-
-[**JADIS — Just A Dude In Space**](https://github.com/Outer-Void/Justadudeinspace)
-[Outer-Void](https://github.com/Outer-Void/blux-gpt)
+**JADIS — Just A Dude In Space**  
+[Outer-Void/blux-gpt](https://github.com/Outer-Void/blux-gpt)

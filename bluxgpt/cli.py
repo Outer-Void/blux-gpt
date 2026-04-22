@@ -65,7 +65,12 @@ def models() -> None:
 
 @app.command()
 def status() -> None:
-    """Show configuration and API key health."""
+    """Show configuration status.
+
+    Reports environment, model lane selection, and API key presence.
+    This is a CONFIGURATION CHECK ONLY — provider connectivity is not verified.
+    'set' means the key is present in your config file, nothing more.
+    """
     settings = load_settings()
     ctx = build_context()
 
@@ -77,18 +82,19 @@ def status() -> None:
             f"AXIOM        [cyan]{ctx.axiom_version or 'not installed'}[/cyan]\n"
             f"config file  [cyan]{ENV_PATH}[/cyan]"
         ),
-        title="[bold cyan]BluxGPT Status[/bold cyan]",
+        title="[bold cyan]BluxGPT — Configuration Status[/bold cyan]",
         border_style="cyan",
     ))
 
     console.print()
-    console.print("[bold]Model stack[/bold]")
-    console.print(f"  default  {settings.default_model}")
-    console.print(f"  cheap    {settings.cheap_model}")
-    console.print(f"  fast     {settings.fast_model}")
+    console.print("[bold]Model lanes[/bold]")
+    console.print(f"  default    {settings.default_model}")
+    console.print(f"  cheap      {settings.cheap_model}")
+    console.print(f"  fast       {settings.fast_model}")
+    console.print(f"  reasoning  {settings.reasoning_model}")
 
     console.print()
-    console.print("[bold]API keys[/bold]")
+    console.print("[bold]API keys[/bold]  [dim](config presence only — connectivity not verified)[/dim]")
 
     def _key_status(label: str, key: str) -> None:
         if key:

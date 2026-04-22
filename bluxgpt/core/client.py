@@ -11,8 +11,9 @@ from bluxgpt.core.models import MODEL_REGISTRY, resolve_model
 class BluxClient:
     """Unified multi-model client.
 
-    Resolves a model key to its provider, validates the required API key
-    is present, and returns the appropriate adapter.
+    Model authority: MODEL_REGISTRY in bluxgpt/core/models.py is the single
+    source of truth for both routing (provider) and the API model name sent to
+    each provider. Settings carry lane selection and API credentials only.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -30,7 +31,7 @@ class BluxClient:
                 )
             return OpenAIGPTAdapter(
                 api_key=self.settings.openai_api_key,
-                model=self.settings.openai_model,
+                model=spec.api_model_name,
             )
 
         if spec.provider == "deepseek":
@@ -42,7 +43,7 @@ class BluxClient:
             return DeepSeekAdapter(
                 api_key=self.settings.deepseek_api_key,
                 base_url=self.settings.deepseek_base_url,
-                model=self.settings.deepseek_model,
+                model=spec.api_model_name,
             )
 
         if spec.provider == "anthropic":
@@ -53,7 +54,7 @@ class BluxClient:
                 )
             return ClaudeAdapter(
                 api_key=self.settings.anthropic_api_key,
-                model=self.settings.anthropic_model,
+                model=spec.api_model_name,
             )
 
         raise RuntimeError(f"Unsupported provider: {spec.provider!r}")
