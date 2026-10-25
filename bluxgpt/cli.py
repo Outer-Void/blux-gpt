@@ -1,272 +1,271 @@
+"""`bluxgpt`: advisory CLI and BLUX model backend.
+
+  bluxgpt ask "question" [-m blux-main|blux-fast|blux-reason|blux-code] [--stream] [--json] ...
+  bluxgpt models | status | check [--real] | history | version | uninstall
+  bluxgpt blux-model-backend        (used by BLUX; speaks the model-backend protocol on stdin/stdout)
+
+BluxGPT is advisory: it prints answers and tool calls, and never runs anything. Exit codes: 0 ok, 1 the
+model call failed (the normalized error is printed), 2 usage.
+"""
+
 from __future__ import annotations
 
+import argparse
 import json
-import os
 import sys
-from typing import Optional
+import threading
+from pathlib import Path
+from typing import Any
 
-import typer
-from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
+from bluxgpt import __version__, client, history
+from bluxgpt.api import LOGICAL_MODELS, MODEL_API_VERSION, ModelError
+from bluxgpt.config import SECRET_NAMES, Config
+from bluxgpt.context import SYSTEM_PROMPT, basic_context
 
-from bluxgpt import __version__
-from bluxgpt.core.client import BluxClient
-from bluxgpt.core.config import ENV_PATH, load_settings
-from bluxgpt.core.context import build_context, render_context_block, render_system_prompt
-from bluxgpt.core.history import append_history, clear_history, read_history
-from bluxgpt.core.logger import log_request
-from bluxgpt.core.models import MODEL_REGISTRY, MODEL_ALIASES, resolve_model
-
-app = typer.Typer(
-    help="BluxGPT v1.0 — advisory AI CLI for the BLUX environment.",
-    no_args_is_help=True,
-)
-console = Console()
-err_console = Console(stderr=True)
+OVERLAY_START = "### >>> BLUXGPT OVERLAY >>>"
+OVERLAY_END = "### <<< BLUXGPT OVERLAY <<<"
 
 
-# ---------------------------------------------------------------------------
-# version
-# ---------------------------------------------------------------------------
-
-@app.command()
-def version() -> None:
-    """Print BluxGPT version."""
-    console.print(f"[bold green]BluxGPT v{__version__}[/bold green]")
-    blux10k = os.getenv("BLUX10K_VERSION", "")
-    axiom = os.getenv("AXIOM_VERSION", "")
-    if blux10k:
-        console.print(f"  blux10k  {blux10k}")
-    if axiom:
-        console.print(f"  AXIOM    {axiom}")
-
-
-# ---------------------------------------------------------------------------
-# models
-# ---------------------------------------------------------------------------
-
-@app.command()
-def models() -> None:
-    """List all configured models and their aliases."""
-    console.print("[bold cyan]Model registry[/bold cyan]")
-    for key, spec in MODEL_REGISTRY.items():
-        console.print(f"  [green]{key}[/green]  [{spec.provider}]  {spec.description}")
-
-    console.print()
-    console.print("[bold cyan]Aliases[/bold cyan]")
-    for alias, target in MODEL_ALIASES.items():
-        console.print(f"  {alias}  →  {target}")
-
-
-# ---------------------------------------------------------------------------
-# status
-# ---------------------------------------------------------------------------
-
-@app.command()
-def status() -> None:
-    """Show configuration status.
-
-    Reports environment, model lane selection, and API key presence.
-    This is a CONFIGURATION CHECK ONLY — provider connectivity is not verified.
-    'set' means the key is present in your config file, nothing more.
-    """
-    settings = load_settings()
-    ctx = build_context()
-
-    console.print(Panel(
-        Text.from_markup(
-            f"[bold]BluxGPT v{__version__}[/bold]\n"
-            f"platform     [cyan]{ctx.platform}[/cyan]\n"
-            f"blux10k      [cyan]{ctx.blux10k_version or 'not detected'}[/cyan]\n"
-            f"AXIOM        [cyan]{ctx.axiom_version or 'not installed'}[/cyan]\n"
-            f"config file  [cyan]{ENV_PATH}[/cyan]"
-        ),
-        title="[bold cyan]BluxGPT — Configuration Status[/bold cyan]",
-        border_style="cyan",
-    ))
-
-    console.print()
-    console.print("[bold]Model lanes[/bold]")
-    console.print(f"  default    {settings.default_model}")
-    console.print(f"  cheap      {settings.cheap_model}")
-    console.print(f"  fast       {settings.fast_model}")
-    console.print(f"  reasoning  {settings.reasoning_model}")
-
-    console.print()
-    console.print("[bold]API keys[/bold]  [dim](config presence only — connectivity not verified)[/dim]")
-
-    def _key_status(label: str, key: str) -> None:
-        if key:
-            masked = f"****{key[-4:]}"
-            console.print(f"  {label:<14} [green]set[/green]  ({masked})")
-        else:
-            console.print(f"  {label:<14} [red]missing[/red]")
-
-    _key_status("openai", settings.openai_api_key)
-    _key_status("deepseek", settings.deepseek_api_key)
-    _key_status("anthropic", settings.anthropic_api_key)
-
-    console.print()
-    console.print("[bold]Flags[/bold]")
-    console.print(f"  context inject  {'on' if settings.context_inject else 'off'}")
-    console.print(f"  log requests    {'on' if settings.log_requests else 'off'}")
-    console.print(f"  AXIOM logging   {'on' if settings.axiom_logging else 'off'}")
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="bluxgpt", description="BluxGPT: advisory AI CLI and BLUX model gateway.")
+    p.add_argument("--version", action="version", version=f"bluxgpt {__version__}")
+    sub = p.add_subparsers(dest="command", required=True)
+    a = sub.add_parser("ask", help="ask a logical BLUX model (advisory only)")
+    a.add_argument("prompt")
+    a.add_argument("-m", "--model", help="blux-main (default), blux-fast, blux-reason or blux-code")
+    a.add_argument("--system", help="system instructions (replaces the BluxGPT default)")
+    a.add_argument("--context", action="store_true", help="add basic environment context (platform, tool versions)")
+    a.add_argument("--json-schema", help="JSON Schema file: return structured output matching it")
+    a.add_argument("--stream", action="store_true", help="print the answer as it arrives")
+    a.add_argument("--deterministic", action="store_true", help="temperature 0 / fixed seed where the route allows")
+    a.add_argument("--max-output-tokens", type=int)
+    a.add_argument("--timeout", type=float, default=120.0, help="seconds (default 120)")
+    a.add_argument("--no-fallback", action="store_true")
+    a.add_argument("--json", action="store_true", help="print the full blux.model-response")
+    a.add_argument("--no-history", action="store_true")
+    m = sub.add_parser("models", help="logical models and the routes that serve them")
+    m.add_argument("--json", action="store_true")
+    sub.add_parser("status", help="configuration: which keys are set (never their values), routes, flags")
+    c = sub.add_parser("check", help="check routes: offline with the mock provider, or --real against providers")
+    c.add_argument(
+        "--real", action="store_true", help="send a tiny prompt to every configured real route (uses credit)"
+    )
+    c.add_argument("--model", choices=LOGICAL_MODELS)
+    h = sub.add_parser("history", help="local history")
+    h.add_argument("--limit", type=int, default=20)
+    h.add_argument("--clear", action="store_true")
+    h.add_argument("--json", action="store_true")
+    sub.add_parser("version", help="print the version")
+    sub.add_parser("uninstall", help="remove the BLUXGPT OVERLAY block from ~/.zshrc.local")
+    sub.add_parser("blux-model-backend", help="BLUX model-backend protocol (JSON on stdin, event lines on stdout)")
+    return p
 
 
-# ---------------------------------------------------------------------------
-# ask
-# ---------------------------------------------------------------------------
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.command == "blux-model-backend":
+        from bluxgpt.backend import main as backend
 
-@app.command()
-def ask(
-    prompt: str = typer.Argument(..., help="The question or request to send to the AI."),
-    model: Optional[str] = typer.Option(
-        None, "--model", "-m",
-        help="Model key or alias. Run 'blux models' for options.",
-    ),
-    no_context: bool = typer.Option(
-        False, "--no-context",
-        help="Skip injecting shell/env context into the prompt.",
-    ),
-) -> None:
-    """Ask the AI a question. Advisory only — it suggests, never executes."""
-    settings = load_settings()
+        return backend()
+    config = Config.load()
+    if args.command == "version":
+        print(f"bluxgpt {__version__} (BLUX Model API {MODEL_API_VERSION})")
+        return 0
+    if args.command == "ask":
+        return _ask(args, config)
+    if args.command == "models":
+        routes = client.load_routes(config)
+        if args.json:
+            print(json.dumps(routes, indent=2))
+            return 0
+        print(f"routes: {routes['routes_id']}")
+        for model in LOGICAL_MODELS:
+            print(f"\n{model}")
+            for r in routes["models"][model]["routes"]:
+                print(
+                    f"  {r['route_id']:<18} {r['provider']}/{r['provider_model']}  [{r['tier']}]  "
+                    f"{', '.join(r['capabilities'])}"
+                )
+        return 0
+    if args.command == "status":
+        default, note = config.default_model()
+        print(f"bluxgpt {__version__}  config {config.path} ({'found' if config.file else 'not found'})")
+        print(f"default model  {default}" + (f"   ({note})" if note else ""))
+        print(f"routes         {config.get('BLUXGPT_ROUTES') or 'packaged default'}")
+        print("credentials    (presence only; values are never shown)")
+        for name in SECRET_NAMES:
+            print(f"  {name:<26} {'set' if config.secret(name) else 'missing'}")
+        print(f"history        {'on' if config.flag('BLUXGPT_HISTORY', True) else 'off'}")
+        print(f"context        {config.get('BLUXGPT_CONTEXT', 'off')}")
+        return 0
+    if args.command == "check":
+        return _check(args, config)
+    if args.command == "history":
+        if args.clear:
+            history.clear()
+            print("history cleared")
+            return 0
+        entries = history.read(args.limit)
+        if args.json:
+            print(json.dumps(entries, indent=2, ensure_ascii=False))
+        for e in [] if args.json else entries:
+            print(f"{e.get('timestamp', '')[:19]}  {e.get('model')} via {e.get('route')}")
+            print(f"  Q: {e.get('prompt', '')[:120]}")
+            print(f"  A: {e.get('response', '')[:200]}\n")
+        return 0
+    if args.command == "uninstall":
+        return _uninstall()
+    raise AssertionError(args.command)  # pragma: no cover
 
-    # Resolve model
+
+def _ask(args: argparse.Namespace, config: Config) -> int:
+    model = args.model
+    if model is None:
+        model, note = config.default_model()
+        if note:
+            print(f"bluxgpt: {note}", file=sys.stderr)
+    elif model not in LOGICAL_MODELS:
+        from bluxgpt.config import LEGACY_MODELS
+
+        if model in LEGACY_MODELS:
+            print(f"bluxgpt: '{model}' is a 1.0 vendor lane; using {LEGACY_MODELS[model]}", file=sys.stderr)
+            model = LEGACY_MODELS[model]
+    request: dict[str, Any] = {
+        "contract": "blux.model-request",
+        "model_api_version": MODEL_API_VERSION,
+        "model": model,
+        "system": args.system or SYSTEM_PROMPT,
+        "messages": [{"role": "user", "content": args.prompt}],
+        "timeout_ms": int(args.timeout * 1000),
+        "client": {"name": "bluxgpt", "version": __version__},
+    }
+    if args.context or config.get("BLUXGPT_CONTEXT") == "basic":
+        request["context"] = [basic_context()]
+    if args.json_schema:
+        request["response_format"] = {
+            "type": "json_schema",
+            "name": "output",
+            "schema": json.loads(Path(args.json_schema).read_text(encoding="utf-8")),
+        }
+    if args.stream:
+        request["stream"] = True
+    if args.deterministic:
+        request["deterministic"] = True
+    if args.max_output_tokens:
+        request["generation"] = {"max_output_tokens": args.max_output_tokens}
+    if args.no_fallback:
+        request["routing"] = {"allow_fallback": False}
+    streamed = []
+
+    def on_event(kind: str, data: dict[str, Any]) -> None:
+        if kind == "delta" and args.stream and not args.json:
+            streamed.append(data["text"])
+            sys.stdout.write(data["text"])
+            sys.stdout.flush()
+
+    cancel = threading.Event()
     try:
-        chosen_model = resolve_model(model or settings.default_model)
-    except ValueError as e:
-        err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(code=1)
-
-    # Build full prompt
-    full_prompt_parts = []
-
-    # System prompt (context about the environment)
-    full_prompt_parts.append(render_system_prompt())
-
-    # Optional env context block
-    if settings.context_inject and not no_context:
-        ctx_block = render_context_block()
-        if ctx_block:
-            full_prompt_parts.append(ctx_block)
-
-    full_prompt_parts.append(f"User request:\n{prompt}")
-    full_prompt = "\n\n".join(full_prompt_parts)
-
-    # Call the model
-    client = BluxClient(settings)
-    try:
-        response = client.complete(full_prompt, chosen_model)
-    except RuntimeError as e:
-        err_console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(code=1)
-    except Exception as e:
-        err_console.print(f"[red]Unexpected error:[/red] {e}")
-        raise typer.Exit(code=1)
-
-    # Print response
-    console.print()
-    console.print(Panel(
-        response,
-        title=f"[bold green]BluxGPT[/bold green] [dim]({chosen_model})[/dim]",
-        border_style="green",
-    ))
-
-    # Persist
-    append_history(chosen_model, prompt, response)
-    if settings.log_requests:
-        log_request(chosen_model, prompt, response)
+        resp = client.generate(request, config=config, on_event=on_event, cancel=cancel)
+    except KeyboardInterrupt:
+        cancel.set()
+        print("\nbluxgpt: cancelled", file=sys.stderr)
+        return 1
+    except ModelError as exc:
+        print(json.dumps(exc.to_document(), indent=2), file=sys.stdout if args.json else sys.stderr)
+        return 1
+    out = resp["output"]
+    answer = out["text"] if out["json"] is None else json.dumps(out["json"], indent=2, ensure_ascii=False)
+    if args.json:
+        print(json.dumps(resp, indent=2, ensure_ascii=False))
+    else:
+        if streamed:
+            print()
+        elif answer:
+            print(answer)
+        for call in out["tool_calls"]:
+            print(f"[tool call, not executed] {call['name']}({json.dumps(call['arguments'])})")
+        routing = resp["routing"]
+        note = " (fallback)" if routing["fallback_used"] or routing["degraded"] else ""
+        print(
+            f"-- {resp['model']} via {resp['provider']['provider']}/{resp['provider']['provider_model']}{note}",
+            file=sys.stderr,
+        )
+    if config.flag("BLUXGPT_HISTORY", True) and not args.no_history:
+        history.append(resp["model"], resp["routing"]["route_id"], args.prompt, answer or "")
+    return 0
 
 
-# ---------------------------------------------------------------------------
-# history
-# ---------------------------------------------------------------------------
+def _check(args: argparse.Namespace, config: Config) -> int:
+    from bluxgpt.gateway import Gateway
 
-@app.command()
-def history(
-    clear: bool = typer.Option(False, "--clear", help="Wipe conversation history."),
-    limit: int = typer.Option(20, "--limit", "-n", help="Number of entries to show."),
-    raw: bool = typer.Option(False, "--raw", help="Output raw JSON instead of formatted."),
-) -> None:
-    """Show or clear conversation history."""
-    if clear:
-        clear_history()
-        console.print("[yellow]History cleared.[/yellow]")
-        return
+    gateway = Gateway(config)
+    routes = client.load_routes(config)
+    models = [args.model] if args.model else list(LOGICAL_MODELS)
+    failed = 0
+    seen: set[tuple[str, str]] = set()
+    for model in models:
+        for route in routes["models"][model]["routes"]:
+            key = (route["provider"], route["provider_model"])
+            if key in seen:
+                continue
+            seen.add(key)
+            mocked = route["provider"] == "mock"
+            if not args.real and not mocked:
+                print(
+                    f"SKIP  {route['route_id']:<18} {route['provider']}/{route['provider_model']}  (real; use --real)"
+                )
+                continue
+            request = {
+                "contract": "blux.model-request",
+                "model_api_version": MODEL_API_VERSION,
+                "model": model,
+                "messages": [{"role": "user", "content": "Reply with the single word: ok"}],
+                "generation": {"max_output_tokens": 400},
+            }
+            import time
 
-    entries = read_history(limit=limit)
-    if not entries:
-        console.print("[dim]No history yet.[/dim]")
-        return
+            try:
+                resp = gateway.generate(
+                    request,
+                    route,
+                    deadline=time.monotonic() + 60,
+                    cancel=threading.Event(),
+                    emit=lambda kind, data: None,
+                )
+                u = resp["usage"]
+                print(
+                    f"OK    {route['route_id']:<18} {route['provider']}/{route['provider_model']}  "
+                    f"[{'MOCK' if mocked else 'REAL'}] {resp['finish_reason']} tokens={u['total_tokens']}"
+                )
+            except ModelError as exc:
+                failed += 1
+                print(
+                    f"FAIL  {route['route_id']:<18} {route['provider']}/{route['provider_model']}  "
+                    f"[{'MOCK' if mocked else 'REAL'}] {exc.code}: {exc.message}"
+                )
+    return 1 if failed else 0
 
-    if raw:
-        console.print(json.dumps(entries, indent=2, ensure_ascii=False))
-        return
 
-    for entry in entries:
-        ts = entry.get("timestamp", "")[:19].replace("T", " ")
-        m = entry.get("model", "?")
-        p = entry.get("prompt", "")
-        r = entry.get("response", "")
-        console.print(f"[dim]{ts}[/dim]  [cyan]{m}[/cyan]")
-        console.print(f"  [bold]Q:[/bold] {p[:120]}{'…' if len(p) > 120 else ''}")
-        console.print(f"  [bold]A:[/bold] {r[:200]}{'…' if len(r) > 200 else ''}")
-        console.print()
-
-
-# ---------------------------------------------------------------------------
-# uninstall
-# ---------------------------------------------------------------------------
-
-@app.command()
-def uninstall() -> None:
-    """Remove the BLUXGPT OVERLAY block from ~/.zshrc.local."""
+def _uninstall() -> int:
     import shutil
-    from pathlib import Path
 
-    zsh_local = Path.home() / ".zshrc.local"
-    block_start = "### >>> BLUXGPT OVERLAY >>>"
-    block_end = "### <<< BLUXGPT OVERLAY <<<"
-
-    if not zsh_local.exists():
-        console.print("[dim]~/.zshrc.local does not exist. Nothing to do.[/dim]")
-        raise typer.Exit(code=0)
-
-    content = zsh_local.read_text(encoding="utf-8")
-    if block_start not in content:
-        console.print("[dim]BLUXGPT OVERLAY not found in ~/.zshrc.local. Nothing to do.[/dim]")
-        raise typer.Exit(code=0)
-
-    # Backup before modifying
-    backup = zsh_local.with_suffix(".local.bak")
-    shutil.copy2(zsh_local, backup)
-
-    # Strip the block
-    lines = content.splitlines(keepends=True)
-    out_lines = []
-    skip = False
-    for line in lines:
-        if line.rstrip() == block_start:
+    target = Path.home() / ".zshrc.local"
+    if not target.exists() or OVERLAY_START not in target.read_text(encoding="utf-8"):
+        print("BLUXGPT OVERLAY not found in ~/.zshrc.local; nothing to do")
+        return 0
+    shutil.copy2(target, target.with_suffix(".local.bak"))
+    keep, skip = [], False
+    for line in target.read_text(encoding="utf-8").splitlines(keepends=True):
+        if line.rstrip() == OVERLAY_START:
             skip = True
-            continue
-        if line.rstrip() == block_end:
+        elif line.rstrip() == OVERLAY_END:
             skip = False
-            continue
-        if not skip:
-            out_lines.append(line)
-
-    zsh_local.write_text("".join(out_lines), encoding="utf-8")
-
-    console.print(f"[green]BLUXGPT OVERLAY removed from ~/.zshrc.local[/green]")
-    console.print(f"[dim]Backup saved: {backup}[/dim]")
-    console.print("[dim]Run 'source ~/.zshrc' or open a new terminal.[/dim]")
+        elif not skip:
+            keep.append(line)
+    target.write_text("".join(keep), encoding="utf-8")
+    print("BLUXGPT OVERLAY removed from ~/.zshrc.local (backup: ~/.zshrc.local.bak)")
+    return 0
 
 
-# ---------------------------------------------------------------------------
-# entry point
-# ---------------------------------------------------------------------------
-
-if __name__ == "__main__":
-    app()
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

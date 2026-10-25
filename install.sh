@@ -16,7 +16,7 @@ cd "$REPO_ROOT"
 VENV_DIR="$REPO_ROOT/.venv"
 VENV_PYTHON="$VENV_DIR/bin/python"
 
-echo "[bluxgpt] Installing BluxGPT v1.0"
+echo "[bluxgpt] Installing BluxGPT v2.0"
 echo "[bluxgpt] Repo root: $REPO_ROOT"
 
 # Step 1: dependency check
@@ -47,7 +47,7 @@ mkdir -p "$HOME/.config/bluxgpt"
 if [[ ! -f "$HOME/.config/bluxgpt/.env" ]]; then
   cp "$REPO_ROOT/config/.env.example" "$HOME/.config/bluxgpt/.env"
   echo "[bluxgpt] Config created: ~/.config/bluxgpt/.env"
-  echo "[bluxgpt] Add your API keys before running blux."
+  echo "[bluxgpt] Add your API keys before running bluxgpt."
 else
   echo "[bluxgpt] Config already exists: ~/.config/bluxgpt/.env"
 fi
@@ -104,5 +104,6 @@ echo "[bluxgpt] ─────────────────────�
 echo
 echo "  1. Add API keys:  ~/.config/bluxgpt/.env"
 echo "  2. Reload shell:  source ~/.zshrc"
-echo "  3. Verify:        blux status"
-echo "  4. Try it:        blux ask \"your question\""
+echo "  3. Verify:        bluxgpt status && bluxgpt check"
+echo "  4. Try it:        bluxgpt ask \"your question\"            # blux-main by default"
+echo "  5. With BLUX:     blux generate blux-main \"your question\""

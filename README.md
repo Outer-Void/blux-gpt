@@ -1,203 +1,95 @@
-# BluxGPT v1.0
+# BluxGPT 2.0
 
-> Advisory AI CLI for the BLUX environment.  
-> Part of the trifecta: **blux10k** · **AXIOM** · **BluxGPT**
+BluxGPT is the provider gateway behind the **BLUX Model API v1**, and a small advisory CLI.
 
----
+Applications ask BLUX for a **logical model** (`blux-main`, `blux-fast`, `blux-reason`, `blux-code`). BLUX
+routes the request to a provider route, and BluxGPT does the provider work:
 
-## Model stack
+| BluxGPT owns | BluxGPT does not own |
+|---|---|
+| provider transport (OpenAI, Anthropic, DeepSeek, any OpenAI-compatible server such as llama.cpp's `llama-server`, and a deterministic `mock`) | an agent loop: tool calls are returned, never executed |
+| retries with backoff and `Retry-After` | ecosystem orchestration |
+| streaming (Server-Sent Events -> Model API stream events) | device control |
+| timeouts and cancellation | capability authority: BLUX policy decides who may call a model |
+| normalizing responses, usage, tool calls, structured output and errors | routing across providers: BLUX's router does that |
 
-| Lane | Key | Provider |
-|---|---|---|
-| Default | `gpt-5-mini` | OpenAI |
-| Cheap | `deepseek-chat` | DeepSeek |
-| Fast/light | `claude-haiku-4.5` | Anthropic |
-| Reasoning | `deepseek-reasoner` | DeepSeek |
-
-You only need API keys for models you intend to use.
-
-**Aliases:** `claude`, `haiku`, `fast`, `deepseek`, `cheap`, `reasoner`, `reason`, `openai`, `gpt`
-
----
-
-## Core rules
-
-- Advisory only — suggests, never executes
-- Never auto-runs its own output
-- Never writes to `~/.zshrc` directly
-- Installs through `~/.zshrc.local` overlay only
-- Requires blux10k v2.0+ with `BLUX10K_READY=1` and a verifiable `check_version.sh`
-- API keys are masked (`****last4`) in all logs
-
----
-
-## Requirements
-
-- blux10k v2.0 installed and active (`BLUX10K_READY=1`)
-- Python >= 3.8
-
----
+It needs no third-party Python packages: standard library only, Python 3.10+. It imports nothing from BLUX;
+its documents are checked against BLUX's published schemas in CI.
 
 ## Install
 
 ```bash
-# blux10k must be installed first and your shell reloaded
-./install.sh
+./install.sh          # venv, ~/.config/bluxgpt/.env, and `bluxgpt` on PATH via ~/.zshrc.local
 source ~/.zshrc
-blux status
+bluxgpt status        # which credentials are set (never their values)
+bluxgpt check         # offline self-check with the mock provider
+bluxgpt check --real  # one tiny prompt per real route (uses a little credit)
 ```
 
-Safe to re-run. The virtualenv is not recreated if it is already usable.
+**Upgrading from 1.0.** 1.0's overlay defined a `blux` shell function, which shadowed the BLUX command
+line. 2.0 installs `bluxgpt` instead and removes that function. Run `./install.sh` again to replace the
+overlay. 1.0 lane names (`gpt-5-mini`, `claude`, `deepseek` …) still work with `-m` and in
+`BLUXGPT_DEFAULT_MODEL`, mapped to logical models with a notice.
 
----
-
-## Commands
+## Use
 
 ```bash
-blux version                             # BluxGPT version
-blux status                              # configuration status (not live connectivity)
-blux models                              # list models and aliases
-
-blux ask "your question"                 # one-shot query (default model)
-blux ask --model claude "..."            # use fast/light lane
-blux ask --model deepseek-chat "..."     # use cheap lane
-blux ask --model deepseek-reasoner "..." # use reasoning lane
-blux ask --no-context "..."              # skip environment context injection
-
-blux history                             # show recent history
-blux history --raw                       # raw JSON output
-blux history --limit 50                  # show more entries
-blux history --clear                     # wipe history
-
-blux uninstall                           # remove BLUXGPT OVERLAY from ~/.zshrc.local
+bluxgpt ask "how do I find large files?"               # blux-main
+bluxgpt ask -m blux-fast "one-line summary of tar flags" --stream
+bluxgpt ask -m blux-reason "plan a database migration" --json      # full blux.model-response
+bluxgpt ask -m blux-code "write a jq filter" --json-schema schema.json
+bluxgpt models                                          # logical models -> routes
+bluxgpt history
 ```
 
----
-
-## Config
-
-User config: `~/.config/bluxgpt/.env`
-
-Created automatically on first install from `config/.env.example`. Add your API keys there.
+Through BLUX, which adds policy, routing, fallback and receipts:
 
 ```bash
-OPENAI_API_KEY=sk-...
-DEEPSEEK_API_KEY=...
-ANTHROPIC_API_KEY=sk-ant-...
+blux generate blux-main "how do I find large files?"
 ```
 
-API model names are defined in the model registry (`bluxgpt/core/models.py`) and are not overridable via env vars. Lane selection (`BLUXGPT_DEFAULT_MODEL`, etc.) and API credentials are the only user-configurable values.
+BLUX starts `bluxgpt blux-model-backend` for each route attempt; see BLUX `docs/model-api/v1.md`.
 
----
+## Routing and failures
 
-## blux status
+Routes come from `BLUXGPT_ROUTES` or the packaged default (`bluxgpt/data/routes.json`, the same
+`blux.model-routes` format BLUX uses).
 
-`blux status` shows **Configuration Status** only. It does not make any API calls or verify provider connectivity.
+- **Order.** Routes are tried in order. A route that lacks a capability the request needs (streaming,
+  tools, structured output) is skipped.
+- **Fallback.** A failure moves to the next route only when the error allows it. Rate limits, outages,
+  5xx, timeouts, missing credentials and exhausted billing all allow it. A provider's content-filter
+  refusal never does.
+- **Transparency.** Every response lists every attempt, and `degraded` is set when a fallback served it.
+- **Total failure.** When nothing works, the error is `ALL_ROUTES_FAILED` with each attempt's code.
 
-- **"set"** means the key is present in your config file
-- **"missing"** means the key is absent
-- Neither implies the key is valid or the provider is reachable
+## Privacy
 
----
+- **Credentials.** Credentials live in `~/.config/bluxgpt/.env` or the environment. They are sent only to
+  their own provider, in a request header. They are never printed (not even the last four characters) and
+  are scrubbed from every error message.
+- **Context.** Environment context is off. `--context` adds only the platform and BLUX tool versions. 1.0
+  sent your current directory, home path, user name and `git status` with every question.
+- **History.** History stays local, and `BLUXGPT_HISTORY=0` turns it off. 1.0 also wrote every prompt,
+  response and key fragment to a log directory by default; 2.0 has no such log.
+- **Provider reasoning.** Reasoning text that providers return (DeepSeek `reasoning_content`, Anthropic
+  thinking blocks) is discarded. Only its token count is kept.
 
-## Context injection
+## Tests
 
-By default, each request includes a system prompt with:
+`pytest` covers:
+- providers against local HTTP fixtures;
+- transport retries and error mapping;
+- streaming;
+- routing and fallback;
+- the backend protocol;
+- the CLI;
+- secret hygiene;
+- schema conformance.
 
-- Platform (`termux` / `proot-debian` / `debian` / `wsl` / `macos`)
-- blux10k and AXIOM versions (if present)
-- Current working directory, git branch and status
-- Shell and user
+Tests that need real credentials run only with `BLUXGPT_REAL_PROVIDERS=1`, and their output says
+**REAL**. Everything else is **mocked**, against local servers and fixtures that are documented as
+hand-written, never captured traffic.
 
-Disable per-query with `--no-context`.
-
----
-
-## blux10k dependency
-
-BluxGPT requires blux10k v2.0+ to be installed and active. The dependency gate checks for `BLUX10K_READY=1` in your environment and requires `check_version.sh` to be present and executable.
-
-Default install root: `~/.blux10k`
-
-If blux10k is installed elsewhere, set `BLUX10K_INSTALL_DIR` before running the installer:
-
-```bash
-BLUX10K_INSTALL_DIR=/path/to/blux10k ./install.sh
-```
-
----
-
-## Optional developer tools
-
-BluxGPT can optionally install Claude Code and OpenAI Codex during setup. These are not required for any core blux functionality.
-
-```bash
-BLUXGPT_INSTALL_CLAUDE_CODE=1 ./install.sh
-BLUXGPT_INSTALL_CODEX=1 ./install.sh
-
-# Both at once:
-BLUXGPT_INSTALL_CLAUDE_CODE=1 BLUXGPT_INSTALL_CODEX=1 ./install.sh
-```
-
-Requires Node.js and npm. If npm is not present, the step is skipped cleanly.
-
-Install commands used:
-
-```bash
-npm install -g @anthropic-ai/claude-code
-npm i -g @openai/codex
-```
-
----
-
-## AXIOM integration
-
-When AXIOM is installed and `AXIOM_READY=1`:
-
-- `ax ai "question"` proxies to `blux ask`
-- BluxGPT writes run logs to `$AXIOM_REPO_ROOT/cockpit/runs/`
-
----
-
-## Logging
-
-Local logs: `~/.config/bluxgpt/logs/<timestamp>_query.json`
-
----
-
-## Running tests
-
-Tests use **pytest**. `python -m unittest` is not supported.
-
-```bash
-source .venv/bin/activate
-pytest
-```
-
----
-
-## Project layout
-
-```
-blux-gpt/
-├── VERSION
-├── install.sh
-├── pyproject.toml
-├── requirements.txt
-├── config/
-│   └── .env.example
-├── bluxgpt/
-│   ├── cli.py
-│   ├── adapters/       OpenAI, DeepSeek, Claude
-│   ├── core/           config, client, context, history, logger, models
-│   └── shell/          blux() function and .zshrc.local overlay template
-├── scripts/
-│   ├── check_deps.sh
-│   └── install_shell.sh
-└── tests/
-```
-
----
-
-**JADIS — Just A Dude In Space**  
-[Outer-Void/blux-gpt](https://github.com/Outer-Void/blux-gpt)
+See [docs/AUDIT-1.0.md](docs/AUDIT-1.0.md) and [CHANGELOG.md](CHANGELOG.md). Licence: Apache-2.0
+([LICENSE](LICENSE)).

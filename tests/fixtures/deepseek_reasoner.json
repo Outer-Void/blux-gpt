@@ -1,0 +1,4 @@
+{"id": "ds-fixture-1", "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant",
+  "content": "42", "reasoning_content": "PRIVATE REASONING THAT MUST NOT BE KEPT"}}],
+ "usage": {"prompt_tokens": 8, "completion_tokens": 40, "total_tokens": 48, "prompt_cache_hit_tokens": 3,
+           "completion_tokens_details": {"reasoning_tokens": 38}}}

@@ -1,0 +1,25 @@
+{
+  "contract": "blux.model-routes",
+  "model_api_version": "1.0",
+  "routes_id": "bluxgpt-mock",
+  "backends": {"bluxgpt": {"kind": "subprocess", "entrypoint": "bluxgpt blux-model-backend"}},
+  "models": {
+    "blux-main": {"routes": [
+      {"route_id": "main.mock", "backend": "bluxgpt", "provider": "mock", "provider_model": "echo", "locality": "local",
+       "tier": "primary", "capabilities": ["streaming", "tools", "structured_output", "deterministic", "long_context"],
+       "determinism": {"temperature": true, "seed": true}}]},
+    "blux-fast": {"routes": [
+      {"route_id": "fast.mock", "backend": "bluxgpt", "provider": "mock", "provider_model": "echo", "locality": "local",
+       "tier": "primary", "capabilities": ["streaming", "structured_output", "deterministic"],
+       "determinism": {"temperature": true, "seed": true}}]},
+    "blux-reason": {"routes": [
+      {"route_id": "reason.mock", "backend": "bluxgpt", "provider": "mock", "provider_model": "json", "locality": "local",
+       "tier": "primary", "capabilities": ["streaming", "structured_output", "long_context"],
+       "determinism": {"temperature": false, "seed": false}}]},
+    "blux-code": {"routes": [
+      {"route_id": "code.mock", "backend": "bluxgpt", "provider": "mock", "provider_model": "tool", "locality": "local",
+       "tier": "primary", "capabilities": ["streaming", "tools", "structured_output"],
+       "determinism": {"temperature": true, "seed": false}}]}
+  },
+  "defaults": {"max_attempts": 3, "allow_fallback": true, "timeout_ms": 60000}
+}
