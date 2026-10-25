@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **License.** The BLUX Proprietary License applies from 2026-10-25
+  (Copyright (c) 2026 Outer-Void / Justadudeinspace (JADIS); contact outervoid.blux@gmail.com, fallback
+  theoutervoid@outlook.com). Package metadata declares the matching `LicenseRef`. Copies and releases
+  obtained before that date keep the Apache License 2.0.
+
 ## 2.0.0 (Stage 09)
 
 BluxGPT becomes the provider gateway behind the BLUX Model API v1.

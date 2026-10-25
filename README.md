@@ -91,5 +91,13 @@ Tests that need real credentials run only with `BLUXGPT_REAL_PROVIDERS=1`, and t
 **REAL**. Everything else is **mocked**, against local servers and fixtures that are documented as
 hand-written, never captured traffic.
 
-See [docs/AUDIT-1.0.md](docs/AUDIT-1.0.md) and [CHANGELOG.md](CHANGELOG.md). Licence: Apache-2.0
-([LICENSE](LICENSE)).
+See [docs/AUDIT-1.0.md](docs/AUDIT-1.0.md) and [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+**BLUX Proprietary License** (proprietary). Copyright (c) 2026 Outer-Void / Justadudeinspace (JADIS). All rights reserved. See [LICENSE](LICENSE).
+
+Copies and releases obtained before 2026-10-25 remain available under the Apache License 2.0 they were
+published with; every change and release from that date on is proprietary.
+
+Contact: outervoid.blux@gmail.com (main) · theoutervoid@outlook.com (fallback)
