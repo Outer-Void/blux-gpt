@@ -1,0 +1,24 @@
+{
+ "contract": "dat.policy",
+ "version": 1,
+ "policy_id": "blux-gpt-release",
+ "description": "blux-gpt release gate (OV-49, F76). Suppressions are exact fingerprints of triaged non-secrets (test fakes, CI-local service credentials, refused development defaults, false positives); anything else stays blocking.",
+ "gate": {
+  "fail_on": "high",
+  "min_confidence": "medium"
+ },
+ "suppress": [
+  {
+   "rule_id": "secrets.openai-key",
+   "path": "bluxgpt/providers/mock.py",
+   "fingerprint": "992eeae10f261183ac0d85005d0bfefb8ee8cbbe51e76ccb3650490303b2cc46",
+   "reason": "deliberately fake key the mock provider emits to prove scrubbing (marked FAKE_SECRET)"
+  },
+  {
+   "rule_id": "secrets.openai-key",
+   "path": "tests/conftest.py",
+   "fingerprint": "e702c19359e9732c2d18a3cf241e7c1ed8d5e4945dc8a91905d304e5f0ca550c",
+   "reason": "deliberately fake credential-shaped value in a test proving redaction or rejection"
+  }
+ ]
+}
