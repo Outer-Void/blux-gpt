@@ -1,7 +1,9 @@
 """OpenAI Chat Completions, and APIs compatible with it (DeepSeek, llama.cpp's llama-server, others).
 
 Reasoning text some providers return (DeepSeek's `reasoning_content`) is dropped: only its token count is
-kept. BLUX records explicit outputs, never a model's hidden reasoning.
+kept. So is a leading `<think>…</think>` (or `<thinking>`) block in the answer text, which reasoning models served
+without a reasoning parser emit (OV-64, F118), also while streaming. BLUX records explicit outputs, never a
+model's hidden reasoning.
 """
 
 from __future__ import annotations
@@ -14,6 +16,63 @@ from typing import Any
 
 from bluxgpt.api import ModelError, response, system_text, usage
 from bluxgpt.transport import Transport
+
+THINK_TAGS = (("<think>", "</think>"), ("<thinking>", "</thinking>"))
+
+
+def strip_inline_reasoning(text: str | None) -> str | None:
+    """Drop a reasoning block at the start of an answer. An unclosed block is all reasoning: nothing remains."""
+    if text is None:
+        return None
+    body = text.lstrip()
+    for open_tag, close_tag in THINK_TAGS:
+        if body.startswith(open_tag):
+            end = body.find(close_tag, len(open_tag))
+            return "" if end < 0 else body[end + len(close_tag) :].lstrip()
+    return text
+
+
+class InlineReasoningFilter:
+    """Streaming counterpart of strip_inline_reasoning: holds back the start of the answer until it is clear
+    whether it opens a reasoning block, and emits nothing inside one."""
+
+    def __init__(self) -> None:
+        self.buf = ""
+        self.state = "probe"  # probe -> (inside -> after) | pass
+        self.close_tag = ""
+
+    def feed(self, piece: str) -> str:
+        if self.state == "pass":
+            return piece
+        self.buf += piece
+        if self.state == "probe":
+            body = self.buf.lstrip()
+            for open_tag, close_tag in THINK_TAGS:
+                if body.startswith(open_tag):
+                    self.state, self.close_tag, self.buf = "inside", close_tag, body[len(open_tag) :]
+                    break
+            else:
+                if any(tag.startswith(body) for tag, _ in THINK_TAGS):
+                    return ""  # still a possible opening tag
+                self.state, out, self.buf = "pass", self.buf, ""
+                return out
+        if self.state == "inside":
+            end = self.buf.find(self.close_tag)
+            if end < 0:
+                return ""
+            self.state, self.buf = "after", self.buf[end + len(self.close_tag) :]
+        rest = self.buf.lstrip()  # "after": drop whitespace between the block and the answer
+        if not rest:
+            self.buf = ""
+            return ""
+        self.state, self.buf = "pass", ""
+        return rest
+
+    def flush(self) -> str:
+        out = self.buf if self.state == "probe" else ""
+        self.buf = ""
+        return out
+
 
 FINISH = {
     "stop": "stop",
@@ -169,7 +228,7 @@ class OpenAICompatible:
             for c in msg.get("tool_calls") or []
         ]
         return (
-            msg.get("content"),
+            strip_inline_reasoning(msg.get("content")),
             calls,
             FINISH.get(choice.get("finish_reason") or "stop", "other"),
             _usage(doc.get("usage")),
@@ -191,6 +250,17 @@ class OpenAICompatible:
         use = usage()
         req_id = None
         first = None
+        inline = InlineReasoningFilter()
+
+        def visible(piece: str) -> None:
+            nonlocal first
+            if not piece:
+                return
+            if first is None:
+                first = int((time.monotonic() - started) * 1000)
+            text.append(piece)
+            emit("delta", {"text": piece})
+
         for data in events:
             if cancel.is_set():
                 raise ModelError(
@@ -213,10 +283,7 @@ class OpenAICompatible:
             for choice in chunk.get("choices") or []:
                 delta = choice.get("delta") or {}
                 if delta.get("content"):
-                    if first is None:
-                        first = int((time.monotonic() - started) * 1000)
-                    text.append(delta["content"])
-                    emit("delta", {"text": delta["content"]})
+                    visible(inline.feed(delta["content"]))
                 for tc in delta.get("tool_calls") or []:
                     slot = calls.setdefault(tc.get("index", 0), {"id": None, "name": "", "arguments": ""})
                     slot["id"] = tc.get("id") or slot["id"]
@@ -225,6 +292,7 @@ class OpenAICompatible:
                     slot["arguments"] += fn.get("arguments") or ""
                 if choice.get("finish_reason"):
                     finish = FINISH.get(choice["finish_reason"], "other")
+        visible(inline.flush())
         parsed = [_call(c["id"], c["name"], c["arguments"], route) for _, c in sorted(calls.items())]
         for call in parsed:
             emit("tool_call", call)

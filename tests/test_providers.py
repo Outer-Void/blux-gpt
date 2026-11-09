@@ -251,3 +251,60 @@ def test_local_openai_compatible_server_needs_no_key(
     rt = {**route("openai-compatible", "local-gguf", base_url=fake.url), "locality": "local"}
     resp, _ = run(config, request(), rt)
     assert resp["provider"]["locality"] == "local" and "authorization" not in fake.requests[0]["headers"]
+
+
+# OV-64 (F118): inline reasoning from OpenAI-compatible servers -------------------------------------------------
+# A reasoning model served without a reasoning parser (e.g. Qwen3 on llama-server) returns its chain of thought as
+# a leading <think>…</think> block in the answer text. Before OV-64 it reached the answer and BLUX sessions unchanged.
+
+
+def _chat(content: str) -> dict[str, Any]:
+    return {
+        "id": "x",
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 3, "completion_tokens": 9, "total_tokens": 12},
+    }
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("<think>PRIVATE INLINE</think>42", "42"),
+        ("\n<think>\nPRIVATE\nINLINE\n</think>\n\n42", "42"),
+        ("<thinking>PRIVATE INLINE</thinking>42", "42"),
+        ("<think>PRIVATE INLINE never closed", ""),
+        ("The tag <think> mid-answer stays", "The tag <think> mid-answer stays"),
+    ],
+)
+def test_ov64_inline_reasoning_is_dropped(config: Config, fake: FakeProvider, content: str, expected: str) -> None:
+    fake.reply(200, _chat(content))
+    resp, _ = run(config, request(), route("openai-compatible", "qwen3", base_url=fake.url))
+    assert "PRIVATE" not in json.dumps(resp)
+    assert (resp["output"]["text"] or "") == expected
+
+
+def _sse(pieces: list[str]) -> bytes:
+    chunks = [{"id": "x", "choices": [{"index": 0, "delta": {"content": p}}]} for p in pieces]
+    chunks.append({"id": "x", "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+    chunks.append({"id": "x", "choices": [], "usage": {"prompt_tokens": 3, "completion_tokens": 9, "total_tokens": 12}})
+    return b"".join(b"data: " + json.dumps(c).encode() + b"\n\n" for c in chunks) + b"data: [DONE]\n\n"
+
+
+@pytest.mark.parametrize(
+    ("pieces", "expected"),
+    [
+        (["<th", "ink>PRIV", "ATE</thi", "nk>", "4", "2"], "42"),
+        (["<think>PRIVATE</think>\n\n42"], "42"),
+        (["<think>PRIVATE never closed"], ""),
+        (["<", "b>bold</b> 42"], "<b>bold</b> 42"),
+        (["4", "2"], "42"),
+    ],
+)
+def test_ov64_inline_reasoning_is_dropped_while_streaming(
+    config: Config, fake: FakeProvider, pieces: list[str], expected: str
+) -> None:
+    fake.reply(200, _sse(pieces))
+    resp, events = run(config, request(stream=True), route("openai-compatible", "qwen3", base_url=fake.url))
+    deltas = "".join(d["text"] for k, d in events if k == "delta")
+    assert "PRIV" not in deltas and "PRIVATE" not in json.dumps(resp)
+    assert deltas == expected and (resp["output"]["text"] or "") == expected

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Fixed (OV-64, F118).** An OpenAI-compatible server running a reasoning model without a reasoning parser
+  (for example Qwen3 on llama-server) returns its chain of thought as a leading `<think>…</think>` block. That
+  text reached the answer and BLUX sessions unchanged. A leading `<think>` or `<thinking>` block is now dropped,
+  in full responses and while streaming; an unclosed block leaves no answer text. A tag later in the answer is
+  kept.
 - **License.** The BLUX Proprietary License applies from 2026-10-25
   (Copyright (c) 2026 Outer-Void / Justadudeinspace (JADIS); contact outervoid.blux@gmail.com, fallback
   theoutervoid@outlook.com). Package metadata declares the matching `LicenseRef`. Copies and releases

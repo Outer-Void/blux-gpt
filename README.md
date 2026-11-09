@@ -73,7 +73,9 @@ Routes come from `BLUXGPT_ROUTES` or the packaged default (`bluxgpt/data/routes.
 - **History.** History stays local, and `BLUXGPT_HISTORY=0` turns it off. 1.0 also wrote every prompt,
   response and key fragment to a log directory by default; 2.0 has no such log.
 - **Provider reasoning.** Reasoning text that providers return (DeepSeek `reasoning_content`, Anthropic
-  thinking blocks) is discarded. Only its token count is kept.
+  thinking blocks) is discarded. Only its token count is kept. So is a leading `<think>…</think>` or
+  `<thinking>…</thinking>` block in the answer text, which reasoning models served through an OpenAI-compatible
+  server without a reasoning parser emit; streams hold back the start of the answer until that is clear.
 
 ## Tests
 
