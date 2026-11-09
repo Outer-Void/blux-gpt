@@ -65,7 +65,7 @@ Routes come from `BLUXGPT_ROUTES` or the packaged default (`bluxgpt/data/routes.
 
 ## Privacy
 
-- **Credentials.** Credentials live in `~/.config/bluxgpt/.env` or the environment. They are sent only to
+- **Credentials.** Credentials live in `~/.config/bluxgpt/.env` (created mode 600) or the environment. They are sent only to
   their own provider, in a request header. They are never printed (not even the last four characters) and
   are scrubbed from every error message.
 - **Context.** Environment context is off. `--context` adds only the platform and BLUX tool versions. 1.0

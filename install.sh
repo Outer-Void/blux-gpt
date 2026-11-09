@@ -43,14 +43,7 @@ pip install -e "$REPO_ROOT" --quiet
 
 # Step 4: user config
 echo "[bluxgpt] Setting up user config..."
-mkdir -p "$HOME/.config/bluxgpt"
-if [[ ! -f "$HOME/.config/bluxgpt/.env" ]]; then
-  cp "$REPO_ROOT/config/.env.example" "$HOME/.config/bluxgpt/.env"
-  echo "[bluxgpt] Config created: ~/.config/bluxgpt/.env"
-  echo "[bluxgpt] Add your API keys before running bluxgpt."
-else
-  echo "[bluxgpt] Config already exists: ~/.config/bluxgpt/.env"
-fi
+bash "$REPO_ROOT/scripts/setup_config.sh"
 
 # Step 5: shell overlay
 echo "[bluxgpt] Installing shell overlay..."

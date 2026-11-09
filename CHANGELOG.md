@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Fixed (OV-64, F141).** `install.sh` created `~/.config/bluxgpt/.env`, the file it asks you to put API keys in,
+  with the default umask (usually 0644: readable by other users). The config step is now
+  `scripts/setup_config.sh`: a new file is 0600 in a 0700 directory, and an existing file that others can read
+  gets a warning with the `chmod 600` command; it is never changed.
 - **Fixed (OV-64, F118).** An OpenAI-compatible server running a reasoning model without a reasoning parser
   (for example Qwen3 on llama-server) returns its chain of thought as a leading `<think>…</think>` block. That
   text reached the answer and BLUX sessions unchanged. A leading `<think>` or `<thinking>` block is now dropped,
